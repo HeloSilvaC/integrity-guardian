@@ -15,7 +15,7 @@ def listar_arquivos(diretorio):
 
 
 def main():
-    // colocar o diretorio para varrer
+    # colocar o diretorio para varrer
     diretorio = ""
 
     for caminho in listar_arquivos(diretorio):
