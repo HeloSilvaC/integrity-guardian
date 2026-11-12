@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+from src.varredura import listar_arquivos
+from src.hashing import calcular_hash
+
+
+def main():
+    diretorio = sys.argv[1]
+    hashes = {}
+
+    for caminho in listar_arquivos(diretorio):
+        relativo = os.path.relpath(caminho, diretorio).replace(os.sep, "/")
+        hashes[relativo] = calcular_hash(caminho)
+
+    for relativo, valor in hashes.items():
+        print(f"{valor}  {relativo}")
+
+
+if __name__ == "__main__":
+    main()
