@@ -1,1 +1,3 @@
 testes/** -text
+*.sh text eol=lf
+guardiao text eol=lf
