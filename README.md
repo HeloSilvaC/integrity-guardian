@@ -28,7 +28,7 @@ Cada verificação é registrada em um **log** com data, horário e resultado.
 ## Requisitos
 
 - Linux
-- Python 3._X_ ou superior
+- Python 3.8 ou superior (só biblioteca padrão, não precisa instalar nada)
 - Bash
 
 ---
@@ -36,8 +36,8 @@ Cada verificação é registrada em um **log** com data, horário e resultado.
 ## Instalação
 
 ```bash
-git clone https://github.com/HeloSilvaC/guardiao-integridade.git
-cd guardiao-integridade
+git clone https://github.com/HeloSilvaC/integrity-guardian.git
+cd integrity-guardian
 chmod +x guardiao guardiao.sh
 ```
 
@@ -55,13 +55,23 @@ chmod +x guardiao guardiao.sh
 ./guardiao verificar <diretorio>
 ```
 
+Para recadastrar por cima de uma referência que já existe:
+
+```bash
+./guardiao cadastrar <diretorio> --forcar
+```
+
 ### Pelo Shell Script
 
 ```bash
+# Verifica
 ./guardiao.sh <diretorio>
+
+# Cadastra
+./guardiao.sh cadastrar <diretorio>
 ```
 
-O script executa a verificação, interpreta o código de saída e exibe a mensagem correspondente.
+O script chama o `guardiao`, interpreta o código de saída e exibe a mensagem correspondente.
 
 ### Exemplo de saída
 
@@ -93,7 +103,7 @@ Alterações detectadas!
 ## Estrutura do projeto
 
 ```
-guardiao-integridade/
+integrity-guardian/
 ├── guardiao            # Ponto de entrada (CLI)
 ├── guardiao.sh         # Script de automação
 ├── src/
@@ -116,8 +126,34 @@ guardiao-integridade/
 
 | Item | Local | Formato |
 |---|---|---|
-| Referência | _a definir_ | _a definir (JSON? CSV?)_ |
-| Log | _a definir_ | _a definir_ |
+| Referência | `.guardiao/referencia.json` (na pasta do projeto) | JSON com o diretório, a data do cadastro e, para cada arquivo, o caminho relativo, o nome e o hash |
+| Hash da referência | `.guardiao/referencia.json.sha256` | Texto com o SHA-256 do `referencia.json` |
+| Log | `.guardiao/guardiao.log` | Uma linha por execução: `[data hora] comando diretorio -> resultado` |
+
+A pasta `.guardiao/` é ignorada na varredura, então dá para monitorar até a pasta do próprio projeto.
+
+Exemplo de referência:
+
+```json
+{
+  "diretorio": "/home/aluno/guardiao/testes/arquivos",
+  "data": "17/11/2026 14:47:53",
+  "arquivos": {
+    "documentos/notas.txt": {
+      "nome": "notas.txt",
+      "hash": "9f86d081884c7d65..."
+    }
+  }
+}
+```
+
+Exemplo de log:
+
+```
+[17/11/2026 14:47:53] cadastrar testes/arquivos -> referência cadastrada (19 arquivos)
+[17/11/2026 14:47:53] verificar testes/arquivos -> ALTERAÇÕES DETECTADAS: 1 modificado(s), 1 novo(s), 1 removido(s)
+[17/11/2026 14:47:54] verificar nao_existe -> ERRO: diretório 'nao_existe' não encontrado.
+```
 
 ---
 
@@ -125,10 +161,16 @@ guardiao-integridade/
 
 | Situação | Comportamento |
 |---|---|
-| Diretório inexistente | _a definir_ |
-| Arquivo sem permissão de leitura | _a definir_ |
-| Referência não encontrada ao verificar | _a definir_ |
-| Argumentos inválidos | _a definir_ |
+| Diretório inexistente | Mensagem de erro, código `2` |
+| Arquivo sem permissão de leitura (ou link quebrado) | No `verificar`: aparece no relatório como **inacessível** (não conta como removido). Se só tiver isso, código `2`; se também houver alterações, código `1`. No `cadastrar`: a referência **não** é salva e o código é `2` |
+| Referência não encontrada ao verificar | Pede para rodar `cadastrar` antes, código `2` |
+| Referência já existe ao cadastrar | Recusa sobrescrever sem `--forcar`, código `2` |
+| Referência cadastrada para outro diretório | Mensagem de erro, código `2` |
+| Referência alterada ou corrompida | Mensagem de erro, código `2` (ver Limitações de segurança) |
+| Argumentos faltando ou comando inválido | Mostra o uso, código `2` |
+| Qualquer outra falha inesperada | Mensagem de erro, código `2` |
+
+Todos os erros também são registrados no log.
 
 ---
 
@@ -137,23 +179,30 @@ guardiao-integridade/
 Os testes usam o diretório `testes/arquivos/`, sem tocar em arquivos do sistema.
 
 ```bash
+# 0. Fazer uma cópia para não estragar os arquivos de teste
+cp -r testes/arquivos /tmp/demo
+
 # 1. Cadastrar a referência
-./guardiao cadastrar testes/arquivos
+./guardiao.sh cadastrar /tmp/demo
 
-# 2. Modificar um arquivo
-echo "alteração" >> testes/arquivos/<arquivo>
+# 2. Verificar sem mudar nada (código 0)
+./guardiao.sh /tmp/demo
 
-# 3. Criar um arquivo novo
-touch testes/arquivos/novo.txt
+# 3. Modificar, criar e remover um arquivo
+echo "alteração" >> /tmp/demo/documentos/notas.txt
+touch /tmp/demo/novo.txt
+rm /tmp/demo/vazio.txt
 
-# 4. Remover um arquivo
-rm testes/arquivos/<arquivo>
+# 4. Verificar de novo (código 1)
+./guardiao.sh /tmp/demo
 
-# 5. Verificar
-./guardiao.sh testes/arquivos
-
-# 6. Testar um erro
+# 5. Testar erros (código 2)
 ./guardiao verificar pasta_que_nao_existe
+./guardiao cadastrar /tmp/demo          # já existe referência
+chmod 000 /tmp/demo/dados/vendas.csv && ./guardiao verificar /tmp/demo
+
+# 6. Ver o log
+cat .guardiao/guardiao.log
 ```
 
 ---
@@ -162,14 +211,20 @@ rm testes/arquivos/<arquivo>
 
 O hash detecta mudanças no **conteúdo** dos arquivos, mas **não protege a própria referência**: se alguém alterar o arquivo de referência, o Guardião passa a confiar em dados falsos.
 
-_Discussão e medidas adotadas pela dupla: a definir._
+Medidas que adotamos:
+
+1. **Referência somente leitura:** depois do cadastro, `referencia.json` fica com permissão `444`.
+2. **Hash da referência:** no cadastro salvamos o SHA-256 da própria referência em `referencia.json.sha256`. Antes de verificar, o Guardião recalcula e compara; se for diferente (ou o arquivo `.sha256` sumir), ele se recusa a continuar.
+3. **Não sobrescreve sem querer:** `cadastrar` só substitui uma referência existente com `--forcar`.
+
+Mesmo assim, isso **não é proteção completa**: quem tiver permissão de escrita na pasta pode alterar a referência *e* recalcular o `.sha256`. Isso só pega alterações acidentais ou feitas por alguém que não conhece o Guardião. Para uma proteção de verdade seria preciso, por exemplo, guardar a referência em outro lugar (mídia somente leitura, outra máquina), deixar ela com dono `root`, ou assinar com uma chave que o atacante não tenha.
 
 ---
 
 ## Progresso
 
-- [ ] **Parte 1:** varredura recursiva + cálculo de hash
-- [ ] **Parte 2:** `cadastrar` (salvar a referência)
-- [ ] **Parte 3:** `verificar` (comparação + relatório)
-- [ ] **Parte 4:** códigos de saída, log, tratamento de erros, `guardiao.sh`
+- [x] **Parte 1:** varredura recursiva + cálculo de hash
+- [x] **Parte 2:** `cadastrar` (salvar a referência)
+- [x] **Parte 3:** `verificar` (comparação + relatório)
+- [x] **Parte 4:** códigos de saída, log, tratamento de erros, `guardiao.sh`
 - [ ] **Parte 5:** testes finais e ensaio da apresentação
