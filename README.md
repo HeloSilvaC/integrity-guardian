@@ -83,8 +83,38 @@ Arquivos modificados: 1
 Arquivos novos: 2
 Arquivos removidos: 1
 
+Modificados:
+  ~ documentos/notas.txt
+      tamanho: 24 -> 44 bytes
+      modificado em: 17/11/2026 14:51:26 -> 17/11/2026 14:51:28
+      @@ -3 +3,2 @@
+       linha 3
+      +nova linha no final
+  ~ dados/binario.bin
+      tamanho: 2048 -> 2050 bytes
+      modificado em: 17/11/2026 14:51:26 -> 17/11/2026 14:51:28
+      (arquivo binário ou grande, não dá para mostrar o conteúdo)
+
+Novos:
+  + novo.txt
+
+Removidos:
+  - vazio.txt
+
 Alterações detectadas!
 ```
+
+### Vendo o que mudou
+
+Para cada arquivo **modificado**, o relatório mostra:
+
+- o **tamanho** antes e agora;
+- a **data da última modificação** antes e agora;
+- para arquivos de **texto** (até 1 MB), as **linhas que mudaram**: `-` é a linha que saiu, `+` é a que entrou, e as linhas com espaço são só contexto. O `@@ -3 +3,2 @@` diz em que linha fica a mudança (no arquivo antigo e no novo).
+
+Para conseguir mostrar as linhas, o `cadastrar` guarda uma cópia dos arquivos de texto em `.guardiao/copias/`. Arquivos binários ou grandes mostram só o tamanho e a data.
+
+> Um link simbólico aparece como modificado quando o arquivo para onde ele aponta muda, porque o hash é calculado sobre o conteúdo do destino.
 
 ---
 
@@ -113,6 +143,7 @@ integrity-guardian/
 │   ├── referencia.py   # Salva e carrega a referência
 │   ├── comparacao.py   # Compara o estado atual com a referência
 │   ├── relatorio.py    # Formata e exibe os resultados
+│   ├── diferencas.py   # Mostra o que mudou em cada arquivo modificado
 │   ├── log.py          # Registra as execuções
 │   └── codigos.py      # Códigos de saída
 ├── testes/
@@ -128,6 +159,7 @@ integrity-guardian/
 |---|---|---|
 | Referência | `.guardiao/referencia.json` (na pasta do projeto) | JSON com o diretório, a data do cadastro e, para cada arquivo, o caminho relativo, o nome e o hash |
 | Hash da referência | `.guardiao/referencia.json.sha256` | Texto com o SHA-256 do `referencia.json` |
+| Cópias dos arquivos de texto | `.guardiao/copias/` | Cópia dos arquivos de texto (até 1 MB), usada só para mostrar as linhas que mudaram |
 | Log | `.guardiao/guardiao.log` | Uma linha por execução: `[data hora] comando diretorio -> resultado` |
 
 A pasta `.guardiao/` é ignorada na varredura, então dá para monitorar até a pasta do próprio projeto.
@@ -216,6 +248,8 @@ Medidas que adotamos:
 1. **Referência somente leitura:** depois do cadastro, `referencia.json` fica com permissão `444`.
 2. **Hash da referência:** no cadastro salvamos o SHA-256 da própria referência em `referencia.json.sha256`. Antes de verificar, o Guardião recalcula e compara; se for diferente (ou o arquivo `.sha256` sumir), ele se recusa a continuar.
 3. **Não sobrescreve sem querer:** `cadastrar` só substitui uma referência existente com `--forcar`.
+
+As cópias em `.guardiao/copias/` servem **só para mostrar** as diferenças. Quem decide se um arquivo mudou é sempre o hash da referência protegida.
 
 Mesmo assim, isso **não é proteção completa**: quem tiver permissão de escrita na pasta pode alterar a referência *e* recalcular o `.sha256`. Isso só pega alterações acidentais ou feitas por alguém que não conhece o Guardião. Para uma proteção de verdade seria preciso, por exemplo, guardar a referência em outro lugar (mídia somente leitura, outra máquina), deixar ela com dono `root`, ou assinar com uma chave que o atacante não tenha.
 

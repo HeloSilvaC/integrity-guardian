@@ -11,12 +11,14 @@ from src.referencia import salvar_referencia, carregar_referencia, referencia_fo
 from src.comparacao import comparar
 from src.relatorio import mostrar_relatorio
 from src.log import registrar_log
+from src.diferencas import data_modificacao, guardar_copias, descrever_alteracao
 
 # a referência e o log ficam na pasta do projeto, não importa de onde o comando é chamado
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 PASTA_GUARDIAO = os.path.join(PASTA_PROJETO, ".guardiao")
 ARQUIVO_REFERENCIA = os.path.join(PASTA_GUARDIAO, "referencia.json")
 ARQUIVO_LOG = os.path.join(PASTA_GUARDIAO, "guardiao.log")
+PASTA_COPIAS = os.path.join(PASTA_GUARDIAO, "copias")
 
 USO = "Uso: ./guardiao cadastrar <diretorio> [--forcar]\n     ./guardiao verificar <diretorio>"
 
@@ -58,9 +60,12 @@ def cadastrar(diretorio, forcar):
 
     arquivos = {}
     for caminho in hashes:
+        caminho_completo = os.path.join(diretorio, caminho)
         arquivos[caminho] = {
             "nome": os.path.basename(caminho),
             "hash": hashes[caminho],
+            "tamanho": os.path.getsize(caminho_completo),
+            "modificado_em": data_modificacao(caminho_completo),
         }
 
     dados = {
@@ -69,6 +74,9 @@ def cadastrar(diretorio, forcar):
         "arquivos": arquivos,
     }
     salvar_referencia(dados, ARQUIVO_REFERENCIA)
+
+    # guarda uma cópia dos arquivos de texto para mostrar o que mudou depois
+    guardar_copias(diretorio, hashes, PASTA_COPIAS)
 
     print(f"Referência cadastrada com {len(arquivos)} arquivo(s).")
     print(f"Salva em: {ARQUIVO_REFERENCIA}")
@@ -105,7 +113,12 @@ def verificar(diretorio):
             removidos_de_verdade.append(caminho)
     removidos = removidos_de_verdade
 
-    mostrar_relatorio(len(atual), modificados, novos, removidos, inacessiveis)
+    # para cada arquivo modificado, descobre o que mudou nele
+    detalhes = {}
+    for caminho in modificados:
+        detalhes[caminho] = descrever_alteracao(diretorio, caminho, dados["arquivos"][caminho], PASTA_COPIAS)
+
+    mostrar_relatorio(len(atual), modificados, novos, removidos, inacessiveis, detalhes)
 
     resumo = f"{len(modificados)} modificado(s), {len(novos)} novo(s), {len(removidos)} removido(s)"
     if len(inacessiveis) > 0:
