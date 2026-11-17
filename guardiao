@@ -1,22 +1,157 @@
 #!/usr/bin/env python3
+import json
 import os
 import sys
+from datetime import datetime
 
+from src import codigos
 from src.varredura import listar_arquivos
 from src.hashing import calcular_hash
+from src.referencia import salvar_referencia, carregar_referencia, referencia_foi_alterada
+from src.comparacao import comparar
+from src.relatorio import mostrar_relatorio
+from src.log import registrar_log
+
+# a referência e o log ficam na pasta do projeto, não importa de onde o comando é chamado
+PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
+PASTA_GUARDIAO = os.path.join(PASTA_PROJETO, ".guardiao")
+ARQUIVO_REFERENCIA = os.path.join(PASTA_GUARDIAO, "referencia.json")
+ARQUIVO_LOG = os.path.join(PASTA_GUARDIAO, "guardiao.log")
+
+USO = "Uso: ./guardiao cadastrar <diretorio> [--forcar]\n     ./guardiao verificar <diretorio>"
 
 
-def main():
-    diretorio = sys.argv[1]
+def erro(mensagem):
+    # mostra o erro na saída de erro e devolve o código + texto para o log
+    print(f"Erro: {mensagem}", file=sys.stderr)
+    return codigos.ERRO, f"ERRO: {mensagem}"
+
+
+def calcular_hashes(diretorio):
+    """Devolve um dicionário {caminho relativo: hash} e uma lista
+    com os arquivos que não deu para ler."""
     hashes = {}
+    inacessiveis = []
 
     for caminho in listar_arquivos(diretorio):
         relativo = os.path.relpath(caminho, diretorio).replace(os.sep, "/")
-        hashes[relativo] = calcular_hash(caminho)
+        try:
+            hashes[relativo] = calcular_hash(caminho)
+        except OSError:
+            # sem permissão, link quebrado, etc.
+            inacessiveis.append(relativo)
 
-    for relativo, valor in hashes.items():
-        print(f"{valor}  {relativo}")
+    return hashes, inacessiveis
+
+
+def cadastrar(diretorio, forcar):
+    if os.path.exists(ARQUIVO_REFERENCIA) and not forcar:
+        return erro("já existe uma referência cadastrada. Use --forcar para sobrescrever.")
+
+    hashes, inacessiveis = calcular_hashes(diretorio)
+
+    # não salva uma referência incompleta
+    if len(inacessiveis) > 0:
+        for caminho in inacessiveis:
+            print(f"  ! {caminho}")
+        return erro(f"{len(inacessiveis)} arquivo(s) não puderam ser lidos. A referência não foi salva.")
+
+    arquivos = {}
+    for caminho in hashes:
+        arquivos[caminho] = {
+            "nome": os.path.basename(caminho),
+            "hash": hashes[caminho],
+        }
+
+    dados = {
+        "diretorio": os.path.abspath(diretorio),
+        "data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "arquivos": arquivos,
+    }
+    salvar_referencia(dados, ARQUIVO_REFERENCIA)
+
+    print(f"Referência cadastrada com {len(arquivos)} arquivo(s).")
+    print(f"Salva em: {ARQUIVO_REFERENCIA}")
+    return codigos.SEM_ALTERACOES, f"referência cadastrada ({len(arquivos)} arquivos)"
+
+
+def verificar(diretorio):
+    if not os.path.exists(ARQUIVO_REFERENCIA):
+        return erro("nenhuma referência cadastrada. Rode antes: ./guardiao cadastrar <diretorio>")
+
+    if referencia_foi_alterada(ARQUIVO_REFERENCIA):
+        return erro("a referência foi alterada fora do guardião, não dá para confiar nela.")
+
+    try:
+        dados = carregar_referencia(ARQUIVO_REFERENCIA)
+    except json.JSONDecodeError:
+        return erro("o arquivo de referência está corrompido.")
+
+    if dados["diretorio"] != os.path.abspath(diretorio):
+        return erro(f"a referência foi cadastrada para outro diretório: {dados['diretorio']}")
+
+    # monta o dicionário {caminho: hash} da referência
+    referencia = {}
+    for caminho in dados["arquivos"]:
+        referencia[caminho] = dados["arquivos"][caminho]["hash"]
+
+    atual, inacessiveis = calcular_hashes(diretorio)
+    modificados, novos, removidos = comparar(referencia, atual)
+
+    # arquivo que existe mas não deu para ler não foi removido
+    removidos_de_verdade = []
+    for caminho in removidos:
+        if caminho not in inacessiveis:
+            removidos_de_verdade.append(caminho)
+    removidos = removidos_de_verdade
+
+    mostrar_relatorio(len(atual), modificados, novos, removidos, inacessiveis)
+
+    resumo = f"{len(modificados)} modificado(s), {len(novos)} novo(s), {len(removidos)} removido(s)"
+    if len(inacessiveis) > 0:
+        resumo += f", {len(inacessiveis)} inacessível(is)"
+
+    if len(modificados) + len(novos) + len(removidos) > 0:
+        return codigos.COM_ALTERACOES, "ALTERAÇÕES DETECTADAS: " + resumo
+    if len(inacessiveis) > 0:
+        return codigos.ERRO, "ERRO: verificação incompleta: " + resumo
+    return codigos.SEM_ALTERACOES, "sem alterações"
+
+
+def main():
+    if len(sys.argv) < 3:
+        print(USO)
+        codigo, resultado = erro("argumentos insuficientes.")
+        registrar_log(ARQUIVO_LOG, " ".join(sys.argv[1:]) or "(nada)", "", resultado)
+        return codigo
+
+    comando = sys.argv[1]
+    diretorio = sys.argv[2]
+    forcar = "--forcar" in sys.argv[3:]
+
+    if comando == "cadastrar":
+        if not os.path.isdir(diretorio):
+            codigo, resultado = erro(f"diretório '{diretorio}' não encontrado.")
+        else:
+            codigo, resultado = cadastrar(diretorio, forcar)
+    elif comando == "verificar":
+        if not os.path.isdir(diretorio):
+            codigo, resultado = erro(f"diretório '{diretorio}' não encontrado.")
+        else:
+            codigo, resultado = verificar(diretorio)
+    else:
+        print(USO)
+        codigo, resultado = erro(f"comando inválido: '{comando}'.")
+
+    registrar_log(ARQUIVO_LOG, comando, diretorio, resultado)
+    return codigo
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except Exception as e:
+        # qualquer falha que não foi prevista vira código de erro
+        print(f"Erro inesperado: {e}", file=sys.stderr)
+        registrar_log(ARQUIVO_LOG, " ".join(sys.argv[1:]), "", f"ERRO inesperado: {e}")
+        sys.exit(codigos.ERRO)
