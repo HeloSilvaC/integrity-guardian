@@ -29,30 +29,51 @@ def erro(mensagem):
     return codigos.ERRO, f"ERRO: {mensagem}"
 
 
+def caminho_relativo(caminho, diretorio):
+    return os.path.relpath(caminho, diretorio).replace(os.sep, "/")
+
+
+def esta_dentro_de(caminho, pasta):
+    """Diz se o caminho relativo fica dentro da pasta (também relativa)."""
+    return pasta == "." or caminho.startswith(pasta + "/")
+
+
 def calcular_hashes(diretorio):
-    """Devolve um dicionário {caminho relativo: hash} e uma lista
-    com os arquivos que não deu para ler."""
+    """Devolve um dicionário {caminho relativo: hash}, uma lista com os
+    arquivos que não deu para ler e uma lista com as pastas que não
+    deu para abrir."""
     hashes = {}
     inacessiveis = []
 
-    for caminho in listar_arquivos(diretorio):
-        relativo = os.path.relpath(caminho, diretorio).replace(os.sep, "/")
+    arquivos, pastas = listar_arquivos(diretorio)
+
+    for caminho in arquivos:
+        relativo = caminho_relativo(caminho, diretorio)
         try:
             hashes[relativo] = calcular_hash(caminho)
         except OSError:
             # sem permissão, link quebrado, etc.
             inacessiveis.append(relativo)
 
-    return hashes, inacessiveis
+    pastas_com_erro = []
+    for pasta in pastas:
+        pastas_com_erro.append(caminho_relativo(pasta, diretorio))
+
+    return hashes, inacessiveis, pastas_com_erro
 
 
 def cadastrar(diretorio, forcar):
     if os.path.exists(ARQUIVO_REFERENCIA) and not forcar:
         return erro("já existe uma referência cadastrada. Use --forcar para sobrescrever.")
 
-    hashes, inacessiveis = calcular_hashes(diretorio)
+    hashes, inacessiveis, pastas_com_erro = calcular_hashes(diretorio)
 
     # não salva uma referência incompleta
+    if len(pastas_com_erro) > 0:
+        for pasta in pastas_com_erro:
+            print(f"  ! {pasta}/")
+        return erro(f"{len(pastas_com_erro)} pasta(s) não puderam ser abertas. A referência não foi salva.")
+
     if len(inacessiveis) > 0:
         for caminho in inacessiveis:
             print(f"  ! {caminho}")
@@ -103,15 +124,37 @@ def verificar(diretorio):
     for caminho in dados["arquivos"]:
         referencia[caminho] = dados["arquivos"][caminho]["hash"]
 
-    atual, inacessiveis = calcular_hashes(diretorio)
+    atual, inacessiveis, pastas_com_erro = calcular_hashes(diretorio)
     modificados, novos, removidos = comparar(referencia, atual)
 
-    # arquivo que existe mas não deu para ler não foi removido
+    # arquivo que existe mas não deu para ler não foi removido.
+    # o mesmo vale para os arquivos de uma pasta que não deu para abrir:
+    # não sabemos se eles ainda estão lá, então são inacessíveis.
     removidos_de_verdade = []
     for caminho in removidos:
-        if caminho not in inacessiveis:
+        if caminho in inacessiveis:
+            continue
+        dentro_de_pasta_com_erro = False
+        for pasta in pastas_com_erro:
+            if esta_dentro_de(caminho, pasta):
+                dentro_de_pasta_com_erro = True
+        if dentro_de_pasta_com_erro:
+            inacessiveis.append(caminho)
+        else:
             removidos_de_verdade.append(caminho)
     removidos = removidos_de_verdade
+
+    # pasta que não deu para abrir e não tinha nada na referência
+    # (por exemplo, uma pasta nova sem permissão): mostra a própria pasta
+    for pasta in pastas_com_erro:
+        tem_arquivo_da_pasta = False
+        for caminho in inacessiveis:
+            if esta_dentro_de(caminho, pasta):
+                tem_arquivo_da_pasta = True
+        if not tem_arquivo_da_pasta:
+            inacessiveis.append(pasta + "/")
+
+    inacessiveis = sorted(inacessiveis)
 
     # para cada arquivo modificado, descobre o que mudou nele
     detalhes = {}

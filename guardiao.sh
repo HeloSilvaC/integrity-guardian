@@ -1,27 +1,41 @@
 #!/bin/bash
 # Script de automação do guardião.
-# Uso: ./guardiao.sh <diretorio>             -> verifica
-#      ./guardiao.sh cadastrar <diretorio>   -> cadastra a referência
+# Uso: ./guardiao.sh <diretorio>                       -> verifica
+#      ./guardiao.sh verificar <diretorio>             -> verifica
+#      ./guardiao.sh cadastrar <diretorio> [--forcar]  -> cadastra a referência
 
 # pasta onde está este script (para achar o guardiao de qualquer lugar)
 PASTA=$(dirname "$0")
 
+uso() {
+    echo "Uso: $0 <diretorio>" >&2
+    echo "     $0 verificar <diretorio>" >&2
+    echo "     $0 cadastrar <diretorio> [--forcar]" >&2
+}
+
 # 1. ver o que foi pedido
-if [ $# -eq 1 ]; then
-    comando="verificar"
-    diretorio="$1"
-elif [ $# -eq 2 ]; then
+if [ "$1" = "cadastrar" ] || [ "$1" = "verificar" ]; then
     comando="$1"
     diretorio="$2"
+    shift 2 2>/dev/null || shift $#
+    extras=("$@")            # opções que vão direto para o guardiao (ex.: --forcar)
+elif [ $# -eq 1 ]; then
+    comando="verificar"
+    diretorio="$1"
+    extras=()
 else
-    echo "Uso: $0 <diretorio>"
-    echo "     $0 cadastrar <diretorio>"
+    uso
+    exit 2
+fi
+
+if [ -z "$diretorio" ]; then
+    uso
     exit 2
 fi
 
 # 2. se o diretório não existe -> avisar e sair com erro
 if [ ! -d "$diretorio" ]; then
-    echo "Erro: diretório '$diretorio' não encontrado."
+    echo "Erro: diretório '$diretorio' não encontrado." >&2
     exit 2
 fi
 
@@ -33,7 +47,7 @@ else
 fi
 echo
 
-python3 "$PASTA/guardiao" "$comando" "$diretorio"
+python3 "$PASTA/guardiao" "$comando" "$diretorio" "${extras[@]}"
 resultado=$?
 
 echo
@@ -51,7 +65,7 @@ case "$resultado" in
         echo "Atenção: alterações detectadas!"
         ;;
     *)
-        echo "Erro durante a execução (código $resultado)."
+        echo "Erro durante a execução (código $resultado)." >&2
         exit 2
         ;;
 esac

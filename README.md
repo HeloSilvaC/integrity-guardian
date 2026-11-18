@@ -31,6 +31,8 @@ Cada verificação é registrada em um **log** com data, horário e resultado.
 - Python 3.8 ou superior (só biblioteca padrão, não precisa instalar nada)
 - Bash
 
+> No Windows, rode pelo **WSL** (`wsl --install` no PowerShell como administrador). Se os arquivos foram editados no Windows, converta as quebras de linha antes de rodar: `sed -i 's/\r$//' guardiao guardiao.sh testes/demo.sh src/*.py`
+
 ---
 
 ## Instalação
@@ -38,7 +40,7 @@ Cada verificação é registrada em um **log** com data, horário e resultado.
 ```bash
 git clone https://github.com/HeloSilvaC/integrity-guardian.git
 cd integrity-guardian
-chmod +x guardiao guardiao.sh
+chmod +x guardiao guardiao.sh testes/demo.sh
 ```
 
 ---
@@ -66,9 +68,13 @@ Para recadastrar por cima de uma referência que já existe:
 ```bash
 # Verifica
 ./guardiao.sh <diretorio>
+./guardiao.sh verificar <diretorio>     # mesma coisa, escrito por extenso
 
 # Cadastra
 ./guardiao.sh cadastrar <diretorio>
+
+# Recadastra por cima da referência existente
+./guardiao.sh cadastrar <diretorio> --forcar
 ```
 
 O script chama o `guardiao`, interpreta o código de saída e exibe a mensagem correspondente.
@@ -78,9 +84,9 @@ O script chama o `guardiao`, interpreta o código de saída e exibe a mensagem c
 ```
 Verificação concluída.
 
-Arquivos analisados: 10
-Arquivos modificados: 1
-Arquivos novos: 2
+Arquivos analisados: 19
+Arquivos modificados: 2
+Arquivos novos: 1
 Arquivos removidos: 1
 
 Modificados:
@@ -147,6 +153,7 @@ integrity-guardian/
 │   ├── log.py          # Registra as execuções
 │   └── codigos.py      # Códigos de saída
 ├── testes/
+│   ├── demo.sh         # Roteiro da demonstração
 │   └── arquivos/       # Diretório de testes
 └── README.md
 ```
@@ -157,7 +164,7 @@ integrity-guardian/
 
 | Item | Local | Formato |
 |---|---|---|
-| Referência | `.guardiao/referencia.json` (na pasta do projeto) | JSON com o diretório, a data do cadastro e, para cada arquivo, o caminho relativo, o nome e o hash |
+| Referência | `.guardiao/referencia.json` (na pasta do projeto) | JSON com o diretório, a data do cadastro e, para cada arquivo, o caminho relativo, o nome, o hash, o tamanho e a data de modificação |
 | Hash da referência | `.guardiao/referencia.json.sha256` | Texto com o SHA-256 do `referencia.json` |
 | Cópias dos arquivos de texto | `.guardiao/copias/` | Cópia dos arquivos de texto (até 1 MB), usada só para mostrar as linhas que mudaram |
 | Log | `.guardiao/guardiao.log` | Uma linha por execução: `[data hora] comando diretorio -> resultado` |
@@ -173,7 +180,9 @@ Exemplo de referência:
   "arquivos": {
     "documentos/notas.txt": {
       "nome": "notas.txt",
-      "hash": "9f86d081884c7d65..."
+      "hash": "9f86d081884c7d65...",
+      "tamanho": 24,
+      "modificado_em": "17/11/2026 14:47:50"
     }
   }
 }
@@ -194,6 +203,7 @@ Exemplo de log:
 | Situação | Comportamento |
 |---|---|
 | Diretório inexistente | Mensagem de erro, código `2` |
+| Pasta sem permissão de leitura | No `verificar`: os arquivos dela aparecem como **inacessíveis** (não contam como removidos); uma pasta nova sem permissão aparece como `pasta/`. Mesmos códigos da linha abaixo. No `cadastrar`: a referência **não** é salva e o código é `2` |
 | Arquivo sem permissão de leitura (ou link quebrado) | No `verificar`: aparece no relatório como **inacessível** (não conta como removido). Se só tiver isso, código `2`; se também houver alterações, código `1`. No `cadastrar`: a referência **não** é salva e o código é `2` |
 | Referência não encontrada ao verificar | Pede para rodar `cadastrar` antes, código `2` |
 | Referência já existe ao cadastrar | Recusa sobrescrever sem `--forcar`, código `2` |
@@ -210,12 +220,41 @@ Todos os erros também são registrados no log.
 
 Os testes usam o diretório `testes/arquivos/`, sem tocar em arquivos do sistema.
 
+> **Rode como usuário comum, não como root nem com `sudo`.** O root consegue ler qualquer arquivo, então os testes de "sem permissão" (`chmod 000`) não geram erro nenhum.
+
+### Demonstração automática
+
+O `testes/demo.sh` copia `testes/arquivos/` para `/tmp/guardiao-demo` e roda o guardião de verdade nessa cópia, mostrando cada comando e o código de saída.
+
+```bash
+./testes/demo.sh            # para entre as etapas (Enter para seguir)
+./testes/demo.sh --direto   # roda tudo de uma vez
+```
+
+| Etapa | O que faz | Código esperado |
+|---|---|:---:|
+| 1 | Cadastra a referência inicial | `0` |
+| 2 | Verifica sem mudar nada | `0` |
+| 3 | Modifica `documentos/notas.txt` | `1` |
+| 4 | Cria `novo.txt` | `1` |
+| 5 | Remove `vazio.txt` | `1` |
+| 6 | Verifica um diretório que não existe | `2` |
+| 7 | Recadastra e tira a permissão de `dados/vendas.csv` | `0` e `2` |
+| 8 | Altera a referência sem recalcular o hash dela | `2` |
+| 9 | Mostra o log | |
+
+Depois de rodar, dá para conferir os arquivos em `/tmp/guardiao-demo` (no Windows: `\\wsl$\Ubuntu\tmp\guardiao-demo`).
+
+> O demo recadastra com `--forcar`, então substitui a referência que já existir em `.guardiao/`. Não use uma pasta do Windows (`/mnt/c/...`) como diretório de teste: lá o `chmod 000` não tem efeito.
+
+### Passo a passo manual
+
 ```bash
 # 0. Fazer uma cópia para não estragar os arquivos de teste
 cp -r testes/arquivos /tmp/demo
 
-# 1. Cadastrar a referência
-./guardiao.sh cadastrar /tmp/demo
+# 1. Cadastrar a referência (--forcar caso já exista uma)
+./guardiao.sh cadastrar /tmp/demo --forcar
 
 # 2. Verificar sem mudar nada (código 0)
 ./guardiao.sh /tmp/demo
@@ -230,7 +269,7 @@ rm /tmp/demo/vazio.txt
 
 # 5. Testar erros (código 2)
 ./guardiao verificar pasta_que_nao_existe
-./guardiao cadastrar /tmp/demo          # já existe referência
+./guardiao cadastrar /tmp/demo          # já existe referência (sem --forcar)
 chmod 000 /tmp/demo/dados/vendas.csv && ./guardiao verificar /tmp/demo
 
 # 6. Ver o log
@@ -262,3 +301,7 @@ Mesmo assim, isso **não é proteção completa**: quem tiver permissão de escr
 - [x] **Parte 3:** `verificar` (comparação + relatório)
 - [x] **Parte 4:** códigos de saída, log, tratamento de erros, `guardiao.sh`
 - [ ] **Parte 5:** testes finais e ensaio da apresentação
+  - [x] pasta sem permissão aparece como inacessível (não como removida)
+  - [x] `guardiao.sh` aceita `--forcar`
+  - [x] roteiro da demonstração (`testes/demo.sh`)
+  - [ ] ensaio da apresentação
